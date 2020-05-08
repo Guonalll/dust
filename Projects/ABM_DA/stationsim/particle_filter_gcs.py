@@ -5,7 +5,7 @@ Particle Filter - external data version
 '''
 from filter import Filter
 from stationsim_gcs_model import Model
-
+import os
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -13,6 +13,7 @@ from copy import deepcopy
 import multiprocessing
 import warnings
 import itertools
+import datetime
 import time
 
 
@@ -154,12 +155,26 @@ class ParticleFilter(Filter):
         # Force the model to re-seed its random number generator (otherwise each child process
         # has the same generator https://stackoverflow.com/questions/14504866/python-multiprocessing-numpy-random
         model.set_random_seed()
-        for i in range(num_iter):
-            model.step()
-
+        #print(f"Model {particle_num} started stepping...")
+        with open(f"/Users/nick/Desktop/temp/m{particle_num}.txt", 'w') as f:
+            # TEMP terminate if a step takes too long
+            for i in range(num_iter):
+                f.write(f"{i}\n")
+                f.flush()
+                #print(f"\tModel {particle_num} step {i}..")
+                start_time = datetime.datetime.now()
+                model.step()
+                duration = datetime.datetime.now() - start_time
+                if duration.seconds > 10:
+                    print(f"\tModel {particle_num} step {i} took {duration}. Not stepping further.")
+                    break
+            f.write("finished\n")
+            f.flush()
+        os.rename(f"/Users/nick/Desktop/temp/m{particle_num}.txt", f"/Users/nick/Desktop/temp/f{particle_num}.txt")
         noise = np.random.normal(0, particle_std ** 2, size=particle_shape)
         state = model.get_state(sensor='location') + noise
         model.set_state(state, sensor='location')
+        #print(f"Model {particle_num} finished stepping...")
         return model, state
 
     def step(self):
@@ -301,13 +316,16 @@ class ParticleFilter(Filter):
             for i in range(numiter):
                 self.base_model.step()
 
-        stepped_particles = self.pool.starmap(ParticleFilter.step_particle, list(zip( \
-            range(self.number_of_particles),  # Particle numbers (in integer)
+        print("\tStarted stepping particles...",)
+        #stepped_particles = self.pool.starmap(ParticleFilter.step_particle, list(zip( \
+        stepped_particles=list(itertools.starmap(ParticleFilter.step_particle, list(zip( \
+                range(self.number_of_particles),  # Particle numbers (in integer)
             [m for m in self.models],  # Associated Models (a Model object)
             [numiter] * self.number_of_particles,  # Number of iterations to step each particle (an integer)
             [self.particle_std] * self.number_of_particles,  # Particle std (for adding noise) (a float)
             [s.shape for s in self.states],  # Shape (for adding noise) (a tuple)
-        )))
+        ))))
+        print("\t...finished stepping particles")
 
         self.models = [stepped_particles[i][0] for i in range(len(stepped_particles))]
         self.states = np.array([stepped_particles[i][1] for i in range(len(stepped_particles))])
